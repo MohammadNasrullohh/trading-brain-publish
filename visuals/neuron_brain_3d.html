@@ -1,0 +1,1700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title></title>
+  <style>
+    :root {
+      --bg-1: #07111a;
+      --bg-2: #102437;
+      --accent-1: rgba(77, 212, 160, 0.16);
+      --accent-2: rgba(102, 217, 239, 0.14);
+      --accent-3: rgba(255, 190, 118, 0.13);
+      --edge-glow: rgba(77, 212, 160, 0.16);
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 16% 22%, var(--accent-1), transparent 30%),
+        radial-gradient(circle at 82% 18%, var(--accent-2), transparent 30%),
+        radial-gradient(circle at 54% 82%, var(--accent-3), transparent 36%),
+        linear-gradient(155deg, var(--bg-1), var(--bg-2));
+    }
+
+    body {
+      position: relative;
+      transition: background 1200ms ease;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    canvas.dragging {
+      cursor: grabbing;
+    }
+
+    .glow,
+    .tissue,
+    .veil,
+    .scan,
+    .vignette {
+      position: fixed;
+      inset: 0;
+    }
+
+    .glow,
+    .tissue,
+    .veil,
+    .scan,
+    .vignette {
+      pointer-events: none;
+    }
+
+    .glow {
+      background:
+        radial-gradient(circle at 28% 28%, var(--accent-1), transparent 26%),
+        radial-gradient(circle at 76% 24%, var(--accent-2), transparent 26%),
+        radial-gradient(circle at 52% 78%, var(--accent-3), transparent 30%);
+      filter: blur(12px);
+      opacity: 0.82;
+      transition: background 1000ms ease;
+    }
+
+    .tissue {
+      background:
+        radial-gradient(ellipse 28% 38% at 34% 48%, rgba(244, 151, 142, 0.11), transparent 72%),
+        radial-gradient(ellipse 28% 38% at 66% 48%, rgba(141, 185, 255, 0.11), transparent 72%),
+        radial-gradient(ellipse 12% 30% at 50% 50%, rgba(0, 0, 0, 0.22), transparent 82%),
+        radial-gradient(ellipse 38% 18% at 50% 34%, rgba(255, 255, 255, 0.045), transparent 78%),
+        radial-gradient(ellipse 38% 18% at 50% 66%, rgba(255, 255, 255, 0.035), transparent 78%);
+      filter: blur(14px);
+      opacity: 0.62;
+      mix-blend-mode: screen;
+      transition: background 1000ms ease;
+    }
+
+    .scan {
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 22%, transparent 78%, rgba(255, 255, 255, 0.03)),
+        repeating-linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.028) 0,
+          rgba(255, 255, 255, 0.028) 1px,
+          transparent 1px,
+          transparent 5px
+        );
+      mix-blend-mode: screen;
+      opacity: 0.05;
+    }
+
+    .veil {
+      background:
+        radial-gradient(circle at center, transparent 0 38%, rgba(0, 0, 0, 0.06) 68%, rgba(0, 0, 0, 0.24) 100%),
+        radial-gradient(circle at 50% 50%, transparent 0 44%, rgba(255, 255, 255, 0.025) 75%, transparent 100%);
+    }
+
+    .vignette {
+      box-shadow: inset 0 0 180px rgba(0, 0, 0, 0.28);
+    }
+
+  </style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <div class="glow"></div>
+  <div class="tissue"></div>
+  <div class="scan"></div>
+  <div class="veil"></div>
+  <div class="vignette"></div>
+  <script src="neuron_scene_data.js"></script>
+  <script>
+    const data = window.NEURON_SCENE_DATA;
+    if (!data) {
+      throw new Error("Missing neuron scene data.");
+    }
+
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const DEFAULT_ZOOM = 1.08;
+    const ZOOM_MIN = 0.18;
+    const ZOOM_MAX = 7.5;
+    const SCENE_RADIUS = Math.max(...data.nodes.map(node => Math.hypot(node.x, node.y, node.z)));
+    const SCENE_DIAMETER = Math.max(1326, SCENE_RADIUS * 2, Math.max(...data.nodes.map(node => Math.abs(node.z))) * 2);
+    const CAMERA_DISTANCE = Math.max(2200, SCENE_DIAMETER * 1.75);
+    const NEAR_PLANE = 48;
+
+    function clampZoom(value) {
+      return clamp(value, ZOOM_MIN, ZOOM_MAX);
+    }
+
+    function zoomPercentValue(value) {
+      return Math.round(clampZoom(value) * 100);
+    }
+
+    function hexToRgb(hex) {
+      const normalized = hex.replace("#", "");
+      const value = normalized.length === 3
+        ? normalized.split("").map(ch => ch + ch).join("")
+        : normalized;
+      const int = Number.parseInt(value, 16);
+      return {
+        r: (int >> 16) & 255,
+        g: (int >> 8) & 255,
+        b: int & 255
+      };
+    }
+
+    function rgbaFromHex(hex, alpha) {
+      const { r, g, b } = hexToRgb(hex);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    function mixColors(hexA, hexB, t) {
+      const a = hexToRgb(hexA);
+      const b = hexToRgb(hexB);
+      return `rgb(${Math.round(lerp(a.r, b.r, t))}, ${Math.round(lerp(a.g, b.g, t))}, ${Math.round(lerp(a.b, b.b, t))})`;
+    }
+
+    function mixHexColors(hexA, hexB, t) {
+      const a = hexToRgb(hexA);
+      const b = hexToRgb(hexB);
+      return `#${[
+        Math.round(lerp(a.r, b.r, t)),
+        Math.round(lerp(a.g, b.g, t)),
+        Math.round(lerp(a.b, b.b, t))
+      ].map(value => value.toString(16).padStart(2, "0")).join("")}`;
+    }
+
+    const canvas = document.getElementById("scene");
+    const ctx = canvas.getContext("2d");
+    const tissueLayer = document.querySelector(".tissue");
+    const finalNodeId = data.nodes[data.nodes.length - 1].id;
+    const stageOrder = data.stage_order || Object.keys(data.groups);
+    const wealthColor = "#ffd166";
+    const DEFAULT_EXAMPLE = "bullish_btc.json";
+    const MODE_KEY_MAP = {
+      Digit1: 0,
+      Digit2: 1,
+      Digit3: 2,
+      Digit4: 3
+    };
+
+    const verdictModes = [
+      {
+        name: "LONG",
+        palette: ["#4dd4a0", "#66d9ef", "#ffd166"],
+        orbitSpeed: 0.00155,
+        zoom: 1.18,
+        stages: ["core", "market", "signal", "setup", "plan_micro", "output"],
+        keywords: ["bull", "long", "trend", "breakout", "support", "target", "rr long", "body bull", "liquidity bull"],
+        blockers: ["bear", "short", "drawdown", "loss streak", "recovery", "no trade", "spread warn", "liquidity low"]
+      },
+      {
+        name: "SHORT",
+        palette: ["#ff7b72", "#ff9f68", "#f4f1de"],
+        orbitSpeed: 0.00135,
+        zoom: 1.16,
+        stages: ["core", "market", "signal", "setup", "plan_micro", "output"],
+        keywords: ["bear", "short", "breakdown", "resistance", "rr short", "body bear", "liquidity bear", "rejection"],
+        blockers: ["bull", "long", "drawdown", "loss streak", "recovery", "no trade", "spread warn", "liquidity low"]
+      },
+      {
+        name: "WAIT",
+        palette: ["#8db9ff", "#66d9ef", "#f4f1de"],
+        orbitSpeed: 0.00115,
+        zoom: 1.08,
+        stages: ["market", "quality", "pro", "setup", "risk", "output"],
+        keywords: ["mean reversion", "spread", "liquidity", "trap", "range", "execution", "confluence", "quality", "funding hot"],
+        blockers: ["rr long", "rr short", "body bull", "body bear"]
+      },
+      {
+        name: "NO_TRADE",
+        palette: ["#f4978e", "#9aa8ff", "#f4f1de"],
+        orbitSpeed: 0.00095,
+        zoom: 1.02,
+        stages: ["quality", "risk_micro", "risk", "output"],
+        keywords: ["drawdown", "recovery", "risk", "account heat", "loss streak", "leverage", "no trade", "spread warn", "liquidity low", "funding hot"],
+        blockers: ["rr long", "rr short", "body bull", "body bear", "breakout", "trend continuation"]
+      }
+    ];
+
+    const state = {
+      width: 0,
+      height: 0,
+      dpr: 1,
+      rotX: -0.34,
+      rotY: 0.82,
+      targetRotX: -0.34,
+      targetRotY: 0.82,
+      zoom: DEFAULT_ZOOM,
+      targetZoom: DEFAULT_ZOOM,
+      focusX: 0,
+      focusY: 0,
+      focusZ: 0,
+      targetFocusX: 0,
+      targetFocusY: 0,
+      targetFocusZ: 0,
+      dragging: false,
+      pointerX: 0,
+      pointerY: 0,
+      lastX: 0,
+      lastY: 0,
+      hovered: null,
+      locked: null,
+      currentModeIndex: 0,
+      brainVisualState: null,
+      brainResult: null,
+      brainMode: "super",
+      brainExample: DEFAULT_EXAMPLE,
+      manualModeOverride: false,
+      dragMode: "rotate",
+      dragDistance: 0,
+      ignoreNextClick: false,
+      activePointerId: null,
+      lastFrameTime: 0,
+      lastFrameDelta: 0,
+      visibilityPaused: document.hidden,
+      qualityTier: "balanced",
+      slowFrames: 0,
+      fastFrames: 0,
+      interactionUntil: performance.now() + 1600,
+      stars: Array.from({ length: 140 }, () => ({
+        x: Math.random(),
+        y: Math.random(),
+        r: Math.random() * 1.8 + 0.2,
+        a: Math.random() * 0.42 + 0.08
+      }))
+    };
+
+    const nodes = data.nodes.map(node => ({
+      ...node,
+      numericIndex: Number.parseInt(node.index, 10) || 0
+    }));
+    state.qualityTier = nodes.length > 185 ? "low" : nodes.length > 145 ? "balanced" : "high";
+    const nodeMap = Object.fromEntries(nodes.map(node => [node.id, node]));
+    const growthState = Object.fromEntries(nodes.map(node => [node.id, 0.12]));
+    const edgeMeta = data.edges.map(([fromId, toId], index) => ({
+      fromId,
+      toId,
+      index,
+      seed: index + (nodeMap[fromId]?.numericIndex || 0)
+    }));
+
+    const dendriteTemplates = Object.fromEntries(nodes.map(node => {
+      const count = node.group === "output" ? 6 : node.group === "risk" ? 5 : 4;
+      const branches = Array.from({ length: count }, (_, branchIndex) => {
+        const angleSeed = (Math.PI * 2 * branchIndex) / count + node.numericIndex * 0.19;
+        return {
+          angle: angleSeed,
+          spread: 0.12 + (branchIndex % 2) * 0.08,
+          length1: 12 + (branchIndex % 3) * 3 + node.size * 0.16,
+          length2: 20 + (branchIndex % 2) * 6 + node.size * 0.24,
+          sway: 0.45 + (branchIndex % 3) * 0.08,
+        };
+      });
+      return [node.id, branches];
+    }));
+
+    function formatLabel(value) {
+      return value.replace(/_/g, " ");
+    }
+
+    function viewerVerdict() {
+      return state.brainResult?.summary?.verdict
+        || state.brainResult?.brain_output?.summary?.verdict
+        || currentMode().name
+        || "WAIT";
+    }
+
+    function postViewerState(reason = "state") {
+      if (!window.parent || window.parent === window) {
+        return;
+      }
+
+      const selectedNode = state.locked ? nodeMap[state.locked] : null;
+      window.parent.postMessage({
+        source: "trading-brain-viewer",
+        type: "viewer-state",
+        reason,
+        mode: currentMode().name,
+        manualMode: state.manualModeOverride,
+        verdict: viewerVerdict(),
+        focusStage: selectedNode?.stage || state.brainVisualState?.focus_stage || "output",
+        focusLabel: selectedNode?.title || formatLabel(state.brainVisualState?.focus_stage || "output"),
+        zoom: clampZoom(state.targetZoom),
+        zoomPercent: zoomPercentValue(state.targetZoom),
+        selectedNode: selectedNode ? {
+          id: selectedNode.id,
+          index: selectedNode.index,
+          title: selectedNode.title,
+          group: selectedNode.group,
+          stage: selectedNode.stage
+        } : null
+      }, window.location.origin);
+    }
+
+    function setInfoCard(node) {
+      if (!node) {
+        postViewerState("selection-clear");
+        return;
+      }
+      postViewerState("selection");
+    }
+
+    function resize() {
+      state.width = window.innerWidth;
+      state.height = window.innerHeight;
+      const compact = state.width < 1180 || nodes.length > 120;
+      const tierCap = state.qualityTier === "high" ? (compact ? 1.25 : 1.5) : state.qualityTier === "balanced" ? (compact ? 1.02 : 1.18) : 0.92;
+      state.dpr = Math.min(window.devicePixelRatio || 1, tierCap);
+      canvas.width = Math.floor(state.width * state.dpr);
+      canvas.height = Math.floor(state.height * state.dpr);
+      canvas.style.width = `${state.width}px`;
+      canvas.style.height = `${state.height}px`;
+      ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+    }
+
+    function markInteraction(duration = 1800) {
+      state.interactionUntil = performance.now() + duration;
+    }
+
+    function interactionActive() {
+      return state.dragging || state.locked !== null || performance.now() < state.interactionUntil;
+    }
+
+    function detailProfile() {
+      const compact = state.width < 1180 || nodes.length > 120;
+      const tier = state.qualityTier;
+      const active = interactionActive();
+      return {
+        compact,
+        tier,
+        active,
+        frameBudget: compact
+          ? active ? (tier === "low" ? 1000 / 32 : 1000 / 38) : (tier === "high" ? 1000 / 34 : 1000 / 30)
+          : active ? (tier === "high" ? 1000 / 48 : tier === "balanced" ? 1000 / 42 : 1000 / 36) : (tier === "high" ? 1000 / 38 : tier === "balanced" ? 1000 / 32 : 1000 / 28),
+        weakEdgeStride: tier === "high" ? (compact ? 3 : 2) : tier === "balanced" ? (compact ? 4 : 3) : 5,
+        weakEdgeThreshold: tier === "high" ? (compact ? 0.38 : 0.26) : tier === "balanced" ? 0.34 : 0.42,
+        flowThreshold: tier === "high" ? (compact ? 0.7 : 0.58) : tier === "balanced" ? 0.7 : 0.82,
+        orbitThreshold: tier === "high" ? (compact ? 0.74 : 0.52) : tier === "balanced" ? 0.8 : 0.9,
+        starsStride: active ? (tier === "high" ? (compact ? 2 : 1) : tier === "balanced" ? 2 : 3) : (tier === "high" ? 2 : 4),
+        dendriteThreshold: tier === "high" ? (compact ? 0.72 : 0.46) : tier === "balanced" ? 0.62 : 0.84,
+        maxPassiveDendrites: tier === "high" ? (compact ? 3 : 4) : tier === "balanced" ? 3 : 2,
+        clusterLimit: tier === "high" ? (compact ? 3 : 4) : tier === "balanced" ? 3 : 2,
+        clusterThreshold: tier === "high" ? (compact ? 0.44 : 0.34) : tier === "balanced" ? 0.46 : 0.54,
+        nodePadding: tier === "low" ? 120 : 170,
+      };
+    }
+
+    function maybeAdjustQuality(frameDelta) {
+      if (!Number.isFinite(frameDelta) || frameDelta <= 0) {
+        return;
+      }
+
+      const currentTier = state.qualityTier;
+      if (frameDelta > 30) {
+        state.slowFrames += 1;
+        state.fastFrames = Math.max(0, state.fastFrames - 1);
+      } else if (frameDelta < 20) {
+        state.fastFrames += 1;
+        state.slowFrames = Math.max(0, state.slowFrames - 1);
+      } else {
+        state.slowFrames = Math.max(0, state.slowFrames - 1);
+        state.fastFrames = Math.max(0, state.fastFrames - 1);
+      }
+
+      let nextTier = currentTier;
+      if (state.slowFrames >= 10) {
+        nextTier = currentTier === "high" ? "balanced" : "low";
+        state.slowFrames = 0;
+        state.fastFrames = 0;
+      } else if (state.fastFrames >= 42 && state.width >= 1280) {
+        nextTier = currentTier === "low" ? "balanced" : "high";
+        state.slowFrames = 0;
+        state.fastFrames = 0;
+      }
+
+      if (nextTier !== currentTier) {
+        state.qualityTier = nextTier;
+        resize();
+      }
+    }
+
+    function rotate(point, rotX, rotY) {
+      const cosY = Math.cos(rotY);
+      const sinY = Math.sin(rotY);
+      const cosX = Math.cos(rotX);
+      const sinX = Math.sin(rotX);
+
+      const x1 = point.x * cosY - point.z * sinY;
+      const z1 = point.x * sinY + point.z * cosY;
+      const y1 = point.y * cosX - z1 * sinX;
+      const z2 = point.y * sinX + z1 * cosX;
+
+      return { x: x1, y: y1, z: z2 };
+    }
+
+    function project(point) {
+      const shifted = {
+        x: point.x - state.focusX,
+        y: point.y - state.focusY,
+        z: point.z - state.focusZ
+      };
+      const rotated = rotate(shifted, state.rotX, state.rotY);
+      const distanceToCamera = CAMERA_DISTANCE - rotated.z;
+      if (distanceToCamera <= NEAR_PLANE) {
+        return {
+          x: state.width / 2,
+          y: state.height / 2,
+          scale: 0,
+          depth: rotated.z,
+          culled: true
+        };
+      }
+      const perspective = CAMERA_DISTANCE / distanceToCamera;
+      const viewScale = perspective * state.zoom;
+      return {
+        x: rotated.x * viewScale + state.width / 2,
+        y: rotated.y * viewScale + state.height / 2,
+        scale: viewScale,
+        depth: rotated.z,
+        culled: false
+      };
+    }
+
+    function edgeOffscreen(a, b, padding = 140) {
+      const maxX = state.width + padding;
+      const maxY = state.height + padding;
+      if ((a.x < -padding && b.x < -padding) || (a.x > maxX && b.x > maxX)) {
+        return true;
+      }
+      if ((a.y < -padding && b.y < -padding) || (a.y > maxY && b.y > maxY)) {
+        return true;
+      }
+      return false;
+    }
+
+    function nodeOffscreen(projected, radius, padding = 170) {
+      return (
+        projected.x + radius < -padding
+        || projected.x - radius > state.width + padding
+        || projected.y + radius < -padding
+        || projected.y - radius > state.height + padding
+      );
+    }
+
+    function baseWeightByGroup(modeName, group) {
+      const matrices = {
+        LONG: { core: 0.5, market: 0.72, signal: 0.82, quality: 0.36, adaptive: 0.78, cortex: 0.82, pro: 0.7, setup: 0.92, plan_micro: 0.86, risk_micro: 0.2, risk: 0.46, output: 0.94 },
+        SHORT: { core: 0.5, market: 0.72, signal: 0.82, quality: 0.36, adaptive: 0.78, cortex: 0.82, pro: 0.7, setup: 0.92, plan_micro: 0.86, risk_micro: 0.2, risk: 0.46, output: 0.94 },
+        WAIT: { core: 0.4, market: 0.68, signal: 0.45, quality: 0.8, adaptive: 0.74, cortex: 0.76, pro: 0.72, setup: 0.42, plan_micro: 0.26, risk_micro: 0.58, risk: 0.78, output: 0.66 },
+        NO_TRADE: { core: 0.34, market: 0.46, signal: 0.18, quality: 0.8, adaptive: 0.88, cortex: 0.72, pro: 0.56, setup: 0.14, plan_micro: 0.08, risk_micro: 0.9, risk: 0.96, output: 0.84 }
+      };
+      return matrices[modeName]?.[group] ?? 0.22;
+    }
+
+    function nodeWeight(node, mode) {
+      const title = `${node.title} ${node.description || ""}`.toLowerCase();
+      let weight = baseWeightByGroup(mode.name, node.group);
+
+      for (const keyword of mode.keywords) {
+        if (title.includes(keyword)) {
+          weight += 0.16;
+        }
+      }
+
+      for (const blocker of mode.blockers) {
+        if (title.includes(blocker)) {
+          weight -= 0.17;
+        }
+      }
+
+      if (mode.name === "LONG" && title.includes("short")) {
+        weight -= 0.12;
+      }
+      if (mode.name === "SHORT" && title.includes("long")) {
+        weight -= 0.12;
+      }
+      if (mode.name === "WAIT" && title.includes("verdict gate")) {
+        weight += 0.08;
+      }
+      if (mode.name === "NO_TRADE" && (title.includes("verdict gate") || title.includes("output formatter"))) {
+        weight += 0.1;
+      }
+      if (node.id === finalNodeId) {
+        weight += 0.12;
+      }
+
+      return clamp(weight, 0.05, 1.0);
+    }
+
+    function computeModeProfile(mode) {
+      const weights = Object.fromEntries(nodes.map(node => [node.id, nodeWeight(node, mode)]));
+      const stageCenters = {};
+
+      for (const stage of stageOrder) {
+        const stageNodes = nodes.filter(node => node.stage === stage);
+        let weightedSum = { x: 0, y: 0, z: 0, total: 0 };
+
+        for (const node of stageNodes) {
+          const weight = weights[node.id];
+          if (weight < 0.18) {
+            continue;
+          }
+          weightedSum.x += node.x * weight;
+          weightedSum.y += node.y * weight;
+          weightedSum.z += node.z * weight;
+          weightedSum.total += weight;
+        }
+
+        if (weightedSum.total > 0) {
+          stageCenters[stage] = {
+            x: weightedSum.x / weightedSum.total,
+            y: weightedSum.y / weightedSum.total,
+            z: weightedSum.z / weightedSum.total
+          };
+          continue;
+        }
+
+        if (stageNodes.length > 0) {
+          const fallback = stageNodes.reduce(
+            (acc, node) => ({
+              x: acc.x + node.x,
+              y: acc.y + node.y,
+              z: acc.z + node.z
+            }),
+            { x: 0, y: 0, z: 0 }
+          );
+          stageCenters[stage] = {
+            x: fallback.x / stageNodes.length,
+            y: fallback.y / stageNodes.length,
+            z: fallback.z / stageNodes.length
+          };
+        }
+      }
+
+      return { weights, stageCenters };
+    }
+
+    const modeProfiles = verdictModes.map(mode => ({
+      ...mode,
+      profile: computeModeProfile(mode)
+    }));
+
+    function applyModeTheme(mode) {
+      const palette = activePalette(mode);
+      const root = document.documentElement.style;
+      root.setProperty("--accent-1", rgbaFromHex(palette[0], 0.18));
+      root.setProperty("--accent-2", rgbaFromHex(palette[1], 0.15));
+      root.setProperty("--accent-3", rgbaFromHex(palette[2], 0.14));
+      root.setProperty("--edge-glow", rgbaFromHex(palette[0], 0.22));
+      tissueLayer.style.background = `
+        radial-gradient(ellipse 28% 38% at 34% 48%, ${rgbaFromHex(palette[0], 0.1)}, transparent 72%),
+        radial-gradient(ellipse 28% 38% at 66% 48%, ${rgbaFromHex(palette[1], 0.1)}, transparent 72%),
+        radial-gradient(ellipse 12% 30% at 50% 50%, rgba(0, 0, 0, 0.22), transparent 82%),
+        radial-gradient(ellipse 38% 18% at 50% 34%, ${rgbaFromHex(palette[2], 0.05)}, transparent 78%),
+        radial-gradient(ellipse 38% 18% at 50% 66%, rgba(255, 255, 255, 0.03), transparent 78%)
+      `;
+    }
+
+    function setMode(index, manual = false) {
+      const nextIndex = clamp(index, 0, modeProfiles.length - 1);
+      state.currentModeIndex = nextIndex;
+      state.manualModeOverride = manual;
+      markInteraction(2000);
+      applyModeTheme(modeProfiles[nextIndex]);
+      postViewerState(manual ? "manual-mode" : "brain-mode");
+    }
+
+    function currentMode() {
+      if (state.brainVisualState && !state.manualModeOverride) {
+        return modeProfiles[state.brainVisualState.mode_index] || modeProfiles[0];
+      }
+      return modeProfiles[state.currentModeIndex];
+    }
+
+    function activePairProfile() {
+      return state.brainVisualState?.pair_profile || null;
+    }
+
+    function activePalette(mode) {
+      const pairProfile = activePairProfile();
+      if (!pairProfile?.palette?.length) {
+        return mode.palette;
+      }
+      return mode.palette.map((color, index) => (
+        mixHexColors(color, pairProfile.palette[index % pairProfile.palette.length], 0.58)
+      ));
+    }
+
+    function currentWeights(mode) {
+      if (state.brainVisualState && !state.manualModeOverride) {
+        return state.brainVisualState.node_weights;
+      }
+      return mode.profile.weights;
+    }
+
+    async function loadBrainAnalysis(example = null, mode = null) {
+      const query = new URLSearchParams(window.location.search);
+      const exampleName = example || query.get("example") || state.brainExample || DEFAULT_EXAMPLE;
+      const brainMode = mode || query.get("brain_mode") || state.brainMode || "super";
+
+      try {
+        const response = await fetch("../api/analyze", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            example: exampleName,
+            mode: brainMode,
+            track_signal: false
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Brain API ${response.status}`);
+        }
+
+        const payload = await response.json();
+        state.brainVisualState = payload.visual_state || null;
+        state.brainResult = payload.result || null;
+        state.brainMode = brainMode;
+        state.brainExample = exampleName;
+        state.manualModeOverride = false;
+        markInteraction(2200);
+
+        if (state.brainVisualState) {
+          setMode(state.brainVisualState.mode_index, false);
+          if (!state.locked && state.brainVisualState.focus_point) {
+            state.targetFocusX = state.brainVisualState.focus_point.x;
+            state.targetFocusY = state.brainVisualState.focus_point.y;
+            state.targetFocusZ = state.brainVisualState.focus_point.z;
+          }
+        }
+
+        postViewerState("brain-load");
+        return payload;
+      } catch (error) {
+        console.warn("Brain API unavailable, viewer stays in visual-only mode.", error);
+        return null;
+      }
+    }
+
+    async function analyzePayloadWithBrain(payload, mode = "super") {
+      const response = await fetch("../api/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          payload,
+          mode,
+          track_signal: false
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Brain API ${response.status}`);
+      }
+
+      const data = await response.json();
+      state.brainVisualState = data.visual_state || null;
+      state.brainResult = data.result || null;
+      state.brainMode = mode;
+      state.manualModeOverride = false;
+      markInteraction(2200);
+
+      if (state.brainVisualState) {
+        setMode(state.brainVisualState.mode_index, false);
+        if (!state.locked && state.brainVisualState.focus_point) {
+          state.targetFocusX = state.brainVisualState.focus_point.x;
+          state.targetFocusY = state.brainVisualState.focus_point.y;
+          state.targetFocusZ = state.brainVisualState.focus_point.z;
+        }
+      }
+
+      postViewerState("brain-analyze");
+      return data;
+    }
+
+    function resetView() {
+      markInteraction(2200);
+      state.targetRotX = -0.34;
+      state.targetRotY = 0.82;
+      state.targetZoom = DEFAULT_ZOOM;
+      state.targetFocusX = 0;
+      state.targetFocusY = 0;
+      state.targetFocusZ = 0;
+      postViewerState("reset");
+    }
+
+    function cameraRightVector() {
+      return {
+        x: Math.cos(state.rotY),
+        y: 0,
+        z: -Math.sin(state.rotY)
+      };
+    }
+
+    function cameraUpVector() {
+      return {
+        x: -Math.sin(state.rotX) * Math.sin(state.rotY),
+        y: Math.cos(state.rotX),
+        z: -Math.sin(state.rotX) * Math.cos(state.rotY)
+      };
+    }
+
+    function panCamera(dx, dy) {
+      markInteraction(1800);
+      const right = cameraRightVector();
+      const up = cameraUpVector();
+      const panScale = (0.72 / Math.max(state.zoom, 0.6)) * (1 + Math.abs(state.focusZ) / 900);
+
+      state.targetFocusX -= (right.x * dx + up.x * dy) * panScale;
+      state.targetFocusY -= (right.y * dx + up.y * dy) * panScale;
+      state.targetFocusZ -= (right.z * dx + up.z * dy) * panScale;
+    }
+
+    function drawBackground(time, mode, detail) {
+      const palette = activePalette(mode);
+      ctx.clearRect(0, 0, state.width, state.height);
+
+      const drift = Math.sin(time * 0.00014) * 20;
+      for (let i = 0; i < state.stars.length; i += detail.starsStride) {
+        const star = state.stars[i];
+        const x = (star.x * state.width + drift + state.width) % state.width;
+        const y = star.y * state.height;
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(237, 247, 255, ${star.a})`;
+        ctx.arc(x, y, star.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (detail.tier !== "low" || detail.active) {
+        const aura = ctx.createRadialGradient(
+          state.width * 0.52,
+          state.height * 0.52,
+          0,
+          state.width * 0.52,
+          state.height * 0.52,
+          state.width * 0.38
+        );
+        aura.addColorStop(0, rgbaFromHex(palette[0], detail.compact ? 0.06 : 0.08));
+        aura.addColorStop(0.4, rgbaFromHex(palette[1], detail.compact ? 0.035 : 0.05));
+        aura.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = aura;
+        ctx.fillRect(0, 0, state.width, state.height);
+      }
+    }
+
+    function computeStageClouds(visibleNodes, detail) {
+      const buckets = new Map();
+
+      for (const item of visibleNodes) {
+        if (item.weight < detail.clusterThreshold) {
+          continue;
+        }
+        const key = item.node.stage;
+        const bucket = buckets.get(key) || {
+          stage: item.node.stage,
+          color: colorFor(item.node.group),
+          weight: 0,
+          x: 0,
+          y: 0,
+          scale: 0,
+          points: []
+        };
+        bucket.weight += item.weight;
+        bucket.x += item.projected.x * item.weight;
+        bucket.y += item.projected.y * item.weight;
+        bucket.scale += item.projected.scale * item.weight;
+        bucket.points.push(item);
+        buckets.set(key, bucket);
+      }
+
+      const clouds = [];
+      for (const bucket of buckets.values()) {
+        if (!bucket.weight || bucket.points.length < 2) {
+          continue;
+        }
+        const cx = bucket.x / bucket.weight;
+        const cy = bucket.y / bucket.weight;
+        let spreadX = 0;
+        let spreadY = 0;
+        for (const item of bucket.points) {
+          spreadX += Math.abs(item.projected.x - cx) * item.weight;
+          spreadY += Math.abs(item.projected.y - cy) * item.weight;
+        }
+        const energy = bucket.weight / Math.max(1, bucket.points.length);
+        clouds.push({
+          stage: bucket.stage,
+          color: bucket.color,
+          x: cx,
+          y: cy,
+          spreadX: spreadX / bucket.weight,
+          spreadY: spreadY / bucket.weight,
+          meanScale: bucket.scale / bucket.weight,
+          energy,
+          count: bucket.points.length
+        });
+      }
+
+      return clouds
+        .sort((a, b) => b.energy - a.energy)
+        .slice(0, detail.clusterLimit);
+    }
+
+    function drawStageClouds(clouds, mode, time, detail) {
+      if (!clouds.length) {
+        return;
+      }
+
+      const palette = activePalette(mode);
+      for (let index = 0; index < clouds.length; index += 1) {
+        const cloud = clouds[index];
+        const mixBase = mixHexColors(cloud.color, palette[index % palette.length], 0.48);
+        const radiusX = clamp(72 + cloud.spreadX * 0.92 + cloud.energy * 42, 82, detail.compact ? 230 : 300);
+        const radiusY = clamp(48 + cloud.spreadY * 0.88 + cloud.energy * 34, 58, detail.compact ? 170 : 220);
+        const pulse = 1 + Math.sin(time * 0.00058 + index * 0.92) * 0.04;
+        const alpha = detail.tier === "low" ? 0.075 : detail.compact ? 0.09 : 0.12;
+
+        ctx.save();
+        ctx.translate(cloud.x, cloud.y);
+        ctx.scale(pulse, pulse);
+        const gradient = ctx.createRadialGradient(0, 0, radiusY * 0.06, 0, 0, radiusX);
+        gradient.addColorStop(0, rgbaFromHex(mixBase, alpha + cloud.energy * 0.08));
+        gradient.addColorStop(0.55, rgbaFromHex(mixBase, alpha * 0.55));
+        gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, radiusX, radiusY, Math.sin(time * 0.0002 + index * 0.4) * 0.18, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (detail.tier !== "low") {
+          ctx.strokeStyle = rgbaFromHex(mixHexColors(mixBase, "#edf7ff", 0.22), alpha * 0.55);
+          ctx.lineWidth = detail.compact ? 1 : 1.2;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, radiusX * 0.78, radiusY * 0.74, Math.sin(time * 0.0002 + index * 0.4) * 0.18, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
+    function drawClusterPulseBeats(clouds, mode, time, detail) {
+      if (!clouds.length) {
+        return;
+      }
+
+      const palette = activePalette(mode);
+      const focusStage = state.locked
+        ? nodeMap[state.locked]?.stage
+        : state.brainVisualState?.focus_stage || null;
+
+      for (let index = 0; index < clouds.length; index += 1) {
+        const cloud = clouds[index];
+        const emphasis = cloud.stage === focusStage;
+        const pulseRate = emphasis ? 0.00072 : 0.00048;
+        const basePhase = (time * pulseRate + index * 0.19) % 1;
+        const glowColor = mixHexColors(cloud.color, palette[(index + 1) % palette.length], emphasis ? 0.68 : 0.48);
+        const rings = detail.tier === "low" ? 1 : emphasis ? 3 : 2;
+
+        for (let ringIndex = 0; ringIndex < rings; ringIndex += 1) {
+          const phase = (basePhase + ringIndex / rings) % 1;
+          const fade = 1 - phase;
+          const ringAlpha = (emphasis ? 0.18 : 0.12) * fade * (detail.compact ? 0.9 : 1.0);
+          const ringX = clamp(22 + cloud.spreadX * 0.18 + cloud.energy * 18 + phase * 92, 26, detail.compact ? 132 : 168);
+          const ringY = clamp(14 + cloud.spreadY * 0.16 + cloud.energy * 12 + phase * 58, 18, detail.compact ? 96 : 124);
+
+          ctx.save();
+          ctx.translate(cloud.x, cloud.y);
+          ctx.strokeStyle = rgbaFromHex(glowColor, ringAlpha);
+          ctx.lineWidth = emphasis ? 1.5 : 1.1;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, ringX, ringY, Math.sin(time * 0.00014 + index * 0.5) * 0.22, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      if (clouds.length < 2) {
+        return;
+      }
+
+      ctx.save();
+      for (let index = 0; index < clouds.length - 1; index += 1) {
+        const from = clouds[index];
+        const to = clouds[index + 1];
+        const strength = clamp((from.energy + to.energy) * 0.5, 0.22, 1.0);
+        const pulse = (Math.sin(time * 0.0011 + index * 0.7) + 1) / 2;
+        const color = mixHexColors(from.color, to.color, 0.5);
+        const controlX = (from.x + to.x) / 2;
+        const controlY = (from.y + to.y) / 2 - 18 - strength * 24;
+
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.quadraticCurveTo(controlX, controlY, to.x, to.y);
+        ctx.strokeStyle = rgbaFromHex(color, 0.04 + strength * 0.08);
+        ctx.lineWidth = detail.compact ? 1 : 1.2;
+        ctx.stroke();
+
+        if (detail.tier !== "low") {
+          const t = (time * (0.00018 + strength * 0.00008) + index * 0.21) % 1;
+          const point = bezierPoint({ x: from.x, y: from.y }, { x: controlX, y: controlY }, { x: to.x, y: to.y }, t);
+          ctx.beginPath();
+          ctx.fillStyle = rgbaFromHex(mixHexColors(color, wealthColor, 0.35), 0.28 + pulse * 0.22);
+          ctx.arc(point.x, point.y, detail.compact ? 1.6 : 2.1, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
+    function edgeWeight(fromNode, toNode, weights) {
+      return (weights[fromNode.id] + weights[toNode.id]) / 2;
+    }
+
+    function organicControlPoint(a, b, seed, weight) {
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const length = Math.max(Math.hypot(dx, dy), 1);
+      const nx = -dy / length;
+      const ny = dx / length;
+      const bendBase = 10 + Math.min(length * 0.12, 28) + weight * 22;
+      const direction = seed % 2 === 0 ? 1 : -1;
+      const wobble = Math.sin(seed * 1.713) * 8 + Math.cos(seed * 0.511) * 5;
+      return {
+        x: mx + nx * (bendBase + wobble) * direction,
+        y: my + ny * (bendBase * 0.65 + wobble * 0.4) * direction
+      };
+    }
+
+    function bezierPoint(a, c, b, t) {
+      const mt = 1 - t;
+      return {
+        x: mt * mt * a.x + 2 * mt * t * c.x + t * t * b.x,
+        y: mt * mt * a.y + 2 * mt * t * c.y + t * t * b.y
+      };
+    }
+
+    function drawEdge(fromNode, toNode, a, b, control, weight, mode, pulse, emphasis, detail) {
+      const palette = activePalette(mode);
+      const lowColor = mixHexColors(colorFor(fromNode.group), palette[1], 0.35);
+      const highColor = mixHexColors(colorFor(toNode.group), palette[0], 0.52);
+      const alpha = 0.03 + weight * 0.14 + pulse * 0.08;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.quadraticCurveTo(control.x, control.y, b.x, b.y);
+      if (emphasis) {
+        const gradient = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+        gradient.addColorStop(0, rgbaFromHex(lowColor, alpha));
+        gradient.addColorStop(1, rgbaFromHex(highColor, alpha));
+        ctx.strokeStyle = gradient;
+      } else {
+        ctx.strokeStyle = rgbaFromHex(lowColor, alpha * 0.82);
+      }
+      ctx.lineWidth = Math.max(0.45, (a.scale + b.scale) * (0.22 + weight * (detail.compact ? 0.28 : 0.4)));
+      ctx.stroke();
+
+      if (emphasis && !detail.compact) {
+        const branchAlpha = alpha * 0.52;
+        const branchX = lerp(control.x, b.x, 0.4);
+        const branchY = lerp(control.y, b.y, 0.4);
+        ctx.beginPath();
+        ctx.moveTo(branchX, branchY);
+        ctx.quadraticCurveTo(
+          branchX + (control.y - a.y) * 0.12,
+          branchY - (control.x - a.x) * 0.12,
+          b.x,
+          b.y
+        );
+        ctx.strokeStyle = rgbaFromHex(highColor, branchAlpha);
+        ctx.lineWidth = Math.max(0.28, (a.scale + b.scale) * (0.1 + weight * 0.15));
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function colorFor(group) {
+      return data.groups[group]?.color || "#ffffff";
+    }
+
+    function labelForNode(node, active) {
+      if (active || node.title.length <= 18) {
+        return node.title;
+      }
+      return `${node.title.slice(0, 16).trim()}…`;
+    }
+
+    function growthTarget(node, weight) {
+      let target = weight * 0.82;
+
+      if (node.group === "output") {
+        target += 0.12;
+      } else if (node.group === "risk" || node.group === "setup") {
+        target += 0.06;
+      }
+
+      if (node.id === finalNodeId) {
+        target += 0.14;
+      }
+
+      if (state.locked === node.id) {
+        target = Math.max(target, 0.98);
+      } else if (state.hovered === node.id) {
+        target = Math.max(target, 0.76);
+      }
+
+      return clamp(target, 0.06, 1.0);
+    }
+
+    function updateGrowth(weights) {
+      for (const node of nodes) {
+        const current = growthState[node.id] ?? 0.12;
+        const target = growthTarget(node, weights[node.id]);
+        growthState[node.id] = lerp(current, target, 0.045);
+      }
+    }
+
+    function drawFlow(from, to, control, weight, mode, time, seed, detail, emphasis) {
+      if (weight < detail.flowThreshold && !emphasis) {
+        return;
+      }
+
+      const palette = activePalette(mode);
+      const particleCount = emphasis
+        ? detail.tier === "high" ? (detail.compact ? 2 : 3) : detail.tier === "balanced" ? 2 : 1
+        : 1;
+      const baseRadius = clamp((from.scale + to.scale) * (0.28 + weight * 0.42), 0.65, detail.compact ? 2.4 : 3.1);
+
+      for (let i = 0; i < particleCount; i += 1) {
+        const t = (time * (0.00011 + weight * 0.00012) + seed * 0.071 + i / particleCount) % 1;
+        const point = bezierPoint(from, control, to, t);
+        const glow = palette[(i + seed) % palette.length];
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.shadowColor = glow;
+        ctx.shadowBlur = detail.compact ? 10 + weight * 12 : 16 + weight * 20;
+        ctx.fillStyle = rgbaFromHex(glow, 0.82);
+        ctx.arc(point.x, point.y, baseRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    function roundedRectPath(x, y, width, height, radius) {
+      const safeRadius = Math.min(radius, width / 2, height / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + safeRadius, y);
+      ctx.arcTo(x + width, y, x + width, y + height, safeRadius);
+      ctx.arcTo(x + width, y + height, x, y + height, safeRadius);
+      ctx.arcTo(x, y + height, x, y, safeRadius);
+      ctx.arcTo(x, y, x + width, y, safeRadius);
+      ctx.closePath();
+    }
+
+    function drawNodeLabel(node, projected, radius, weight, growth, active, mode) {
+      if (projected.scale < 0.3 || state.locked !== node.id) {
+        return;
+      }
+
+      const label = labelForNode(node, active);
+      const indexValue = node.numericIndex;
+      const side = indexValue % 2 === 0 ? 1 : -1;
+      const lift = ((indexValue % 3) - 1) * 5;
+      const alpha = clamp(0.08 + weight * 0.26 + growth * 0.42 + (active ? 0.22 : 0), 0.1, 0.9);
+      const fontSize = clamp(8 + projected.scale * 2 + growth * 2.4, 8, 12.5);
+      const tint = mixHexColors("#edf7ff", wealthColor, growth * 0.58);
+      const chipPaddingX = 10;
+      const chipPaddingY = 6;
+      const anchorX = projected.x + side * (radius + 6);
+      const anchorY = projected.y - radius * 0.16;
+
+      ctx.save();
+      ctx.font = `600 ${fontSize}px "Trebuchet MS", Georgia, serif`;
+      const textWidth = ctx.measureText(label).width;
+      const chipHeight = fontSize + chipPaddingY * 2;
+      const chipWidth = textWidth + chipPaddingX * 2;
+      const chipX = side > 0
+        ? anchorX + 12
+        : anchorX - chipWidth - 12;
+      const chipY = projected.y - radius - chipHeight * 0.62 + lift;
+      const connectorX = side > 0 ? chipX : chipX + chipWidth;
+      const connectorY = chipY + chipHeight * 0.5;
+
+      ctx.beginPath();
+      ctx.moveTo(anchorX, anchorY);
+      ctx.quadraticCurveTo(
+        anchorX + side * 10,
+        anchorY - 8,
+        connectorX,
+        connectorY
+      );
+      ctx.strokeStyle = rgbaFromHex(tint, alpha * 0.46);
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+
+      roundedRectPath(chipX, chipY, chipWidth, chipHeight, chipHeight / 2);
+      ctx.fillStyle = `rgba(4, 12, 20, ${0.52 + growth * 0.22})`;
+      ctx.strokeStyle = rgbaFromHex(tint, alpha * 0.28);
+      ctx.lineWidth = 1;
+      ctx.shadowColor = rgbaFromHex(tint, alpha * 0.28);
+      ctx.shadowBlur = 16;
+      ctx.fill();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = rgbaFromHex(tint, alpha);
+      ctx.fillText(label, chipX + chipPaddingX, chipY + chipHeight / 2 + 0.5);
+      ctx.restore();
+    }
+
+    function drawDendrites(node, projected, radius, growth, mode, time, active, detail) {
+      const branches = dendriteTemplates[node.id] || [];
+      if (!branches.length || (!active && growth < detail.dendriteThreshold)) {
+        return;
+      }
+
+      const palette = activePalette(mode);
+      const baseColor = mixHexColors(colorFor(node.group), palette[1], 0.42);
+      const tipColor = mixHexColors(baseColor, wealthColor, growth * 0.34);
+
+      ctx.save();
+      ctx.lineCap = "round";
+
+      const visibleCount = active ? Math.min(branches.length, detail.maxPassiveDendrites + 1) : Math.max(2, Math.min(branches.length, detail.maxPassiveDendrites));
+      for (let i = 0; i < visibleCount; i += 1) {
+        const branch = branches[i];
+        const sway = Math.sin(time * (detail.compact ? 0.00035 : 0.00065) + branch.angle) * branch.sway;
+        const angle = branch.angle + sway;
+        const branchLength = radius + branch.length1 + growth * 10;
+        const branchLength2 = branchLength + branch.length2 + growth * 6;
+        const bend = branchLength * branch.spread;
+        const startX = projected.x + Math.cos(angle) * radius * 0.72;
+        const startY = projected.y + Math.sin(angle) * radius * 0.5;
+        const midX = projected.x + Math.cos(angle) * branchLength + Math.cos(angle + 0.7) * bend;
+        const midY = projected.y + Math.sin(angle) * branchLength * 0.72 + Math.sin(angle + 0.7) * bend * 0.5;
+        const endX = projected.x + Math.cos(angle + 0.22) * branchLength2;
+        const endY = projected.y + Math.sin(angle + 0.22) * branchLength2 * 0.68;
+
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.quadraticCurveTo(midX, midY, endX, endY);
+        ctx.strokeStyle = rgbaFromHex(tipColor, 0.08 + growth * 0.18 + (active ? 0.12 : 0));
+        ctx.lineWidth = 0.52 + growth * (detail.compact ? 0.8 : 1.2);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.fillStyle = rgbaFromHex(wealthColor, 0.14 + growth * 0.26);
+        ctx.arc(endX, endY, 0.62 + growth * 0.72, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+    }
+
+    function drawNode(node, projected, weight, growth, mode, time, detail) {
+      const palette = activePalette(mode);
+      const groupColor = colorFor(node.group);
+      const isHovered = node.id === state.hovered;
+      const isLocked = node.id === state.locked;
+      const isFinal = node.id === finalNodeId;
+      const active = isHovered || isLocked || isFinal || weight > 0.74;
+      const pulse = 1 + Math.sin(time * 0.0028 + node.numericIndex * 0.13) * (0.018 + weight * 0.05);
+      const radius = node.size * projected.scale * (0.28 + weight * 0.24 + growth * 0.28) * pulse;
+      const modeColor = mixHexColors(groupColor, palette[0], 0.48);
+      const shellColor = mixHexColors(modeColor, wealthColor, growth * 0.52);
+
+      drawDendrites(node, projected, radius, growth, mode, time, isLocked || isFinal, detail);
+
+      if (growth > 0.3) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = rgbaFromHex(wealthColor, 0.08 + growth * 0.18);
+        ctx.lineWidth = 0.8 + growth * (detail.compact ? 1.0 : 1.4);
+        ctx.arc(projected.x, projected.y, radius + 8 + growth * 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.shadowColor = shellColor;
+      ctx.shadowBlur = detail.tier === "low"
+        ? 5 + weight * 8 + growth * 10 + (active ? 4 : 0)
+        : detail.compact ? 8 + weight * 12 + growth * 14 + (active ? 8 : 0) : 10 + weight * 18 + growth * 26 + (active ? 12 : 0);
+      ctx.fillStyle = rgbaFromHex(shellColor, clamp(0.18 + weight * 0.52 + growth * 0.36, 0.22, 0.95));
+      ctx.arc(projected.x, projected.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      if (weight > 0.45 || active) {
+        ctx.beginPath();
+        ctx.lineWidth = isFinal ? 2.8 : 1.2 + weight * 1.2 + growth * 1.1;
+        ctx.strokeStyle = rgbaFromHex(isFinal ? palette[2] : "#ffffff", active ? 0.62 : 0.16 + weight * 0.18 + growth * 0.2);
+        ctx.arc(projected.x, projected.y, radius + 2 + weight * 2.4 + growth * 3.2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      const coreGradient = ctx.createRadialGradient(
+        projected.x - radius * 0.34,
+        projected.y - radius * 0.34,
+        radius * 0.06,
+        projected.x,
+        projected.y,
+        radius * 1.22
+      );
+      coreGradient.addColorStop(0, "rgba(255,255,255,0.9)");
+      coreGradient.addColorStop(0.24, rgbaFromHex(palette[1], 0.68 + growth * 0.12));
+      coreGradient.addColorStop(0.55, rgbaFromHex(shellColor, 0.56 + growth * 0.18));
+      coreGradient.addColorStop(1, "rgba(6,16,25,0.12)");
+
+      ctx.beginPath();
+      ctx.fillStyle = coreGradient;
+      ctx.arc(projected.x, projected.y, radius * 0.82, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (growth > detail.orbitThreshold && detail.tier !== "low") {
+        const orbCount = detail.compact ? 2 : growth > 0.78 ? 3 : 2;
+        for (let i = 0; i < orbCount; i += 1) {
+          const angle = time * 0.0022 + i * ((Math.PI * 2) / orbCount) + node.numericIndex * 0.04;
+          const orbitRadius = radius + 9 + growth * 10 + i * 4;
+          const ox = projected.x + Math.cos(angle) * orbitRadius;
+          const oy = projected.y + Math.sin(angle) * orbitRadius * 0.62;
+          ctx.save();
+          ctx.beginPath();
+          ctx.shadowColor = wealthColor;
+          ctx.shadowBlur = 14;
+          ctx.fillStyle = rgbaFromHex(wealthColor, 0.8);
+          ctx.arc(ox, oy, 1.1 + growth * 1.6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      drawNodeLabel(node, projected, radius, weight, growth, active, mode);
+    }
+
+    function findHovered(renderedNodes) {
+      let hovered = null;
+      let bestDistance = Infinity;
+
+      for (const item of renderedNodes) {
+        const dx = state.pointerX - item.projected.x;
+        const dy = state.pointerY - item.projected.y;
+        const radius = item.radius * 1.22;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist <= radius && dist < bestDistance) {
+          hovered = item.node.id;
+          bestDistance = dist;
+        }
+      }
+
+      state.hovered = hovered;
+    }
+
+    function render(time) {
+      const detail = detailProfile();
+      if (state.visibilityPaused) {
+        requestAnimationFrame(render);
+        return;
+      }
+      const frameDelta = state.lastFrameTime ? time - state.lastFrameTime : detail.frameBudget;
+      if (state.lastFrameTime && frameDelta < detail.frameBudget) {
+        requestAnimationFrame(render);
+        return;
+      }
+      state.lastFrameTime = time;
+      state.lastFrameDelta = frameDelta;
+      maybeAdjustQuality(frameDelta);
+
+      const mode = currentMode();
+
+      state.rotX += (state.targetRotX - state.rotX) * 0.08;
+      state.rotY += (state.targetRotY - state.rotY) * 0.06;
+      state.zoom += (state.targetZoom - state.zoom) * 0.08;
+      state.focusX += (state.targetFocusX - state.focusX) * 0.08;
+      state.focusY += (state.targetFocusY - state.focusY) * 0.08;
+      state.focusZ += (state.targetFocusZ - state.focusZ) * 0.08;
+
+      drawBackground(time, mode, detail);
+
+      const weights = currentWeights(mode);
+      const renderedNodes = nodes.map(node => {
+        const projected = project(node);
+        const weight = weights[node.id];
+        const radius = node.size * projected.scale * (0.34 + weight * 0.32);
+        const pinned = node.id === state.locked || node.id === finalNodeId;
+        const culled = Boolean(projected.culled) || (!pinned && nodeOffscreen(projected, radius, detail.nodePadding));
+        return { node, projected, weight, radius, culled };
+      });
+      const projectedMap = Object.fromEntries(renderedNodes.map(item => [item.node.id, item]));
+      renderedNodes.sort((a, b) => a.projected.depth - b.projected.depth);
+      const visibleNodes = renderedNodes.filter(item => !item.culled);
+      const stageClouds = computeStageClouds(visibleNodes, detail);
+      findHovered(visibleNodes);
+      updateGrowth(weights);
+
+      drawStageClouds(stageClouds, mode, time, detail);
+      drawClusterPulseBeats(stageClouds, mode, time, detail);
+
+      const pulseBase = (Math.sin(time * 0.0018) + 1) / 2;
+      for (const edge of edgeMeta) {
+        const fromNode = nodeMap[edge.fromId];
+        const toNode = nodeMap[edge.toId];
+        const from = projectedMap[edge.fromId];
+        const to = projectedMap[edge.toId];
+        const weight = edgeWeight(fromNode, toNode, weights);
+        const emphasis = weight >= 0.72 || state.locked === fromNode.id || state.locked === toNode.id || fromNode.id === finalNodeId || toNode.id === finalNodeId;
+        if (!emphasis && weight < detail.weakEdgeThreshold && edge.index % detail.weakEdgeStride !== 0) {
+          continue;
+        }
+        if (from.projected.culled || to.projected.culled) {
+          continue;
+        }
+        if (edgeOffscreen(from.projected, to.projected, detail.nodePadding)) {
+          continue;
+        }
+        const pulse = ((Math.sin(time * 0.002 + edge.index * 0.43) + 1) / 2) * pulseBase;
+        const control = organicControlPoint(from.projected, to.projected, edge.seed, weight);
+        drawEdge(fromNode, toNode, from.projected, to.projected, control, weight, mode, pulse, emphasis, detail);
+        drawFlow(from.projected, to.projected, control, weight, mode, time, edge.index, detail, emphasis);
+      }
+
+      for (const item of visibleNodes) {
+        drawNode(item.node, item.projected, item.weight, growthState[item.node.id], mode, time, detail);
+      }
+
+      requestAnimationFrame(render);
+    }
+
+    canvas.addEventListener("pointerdown", event => {
+      if (state.activePointerId !== null) {
+        return;
+      }
+      markInteraction(2200);
+      state.dragging = true;
+      state.dragMode = event.button === 2 || event.shiftKey || event.ctrlKey ? "pan" : "rotate";
+      state.dragDistance = 0;
+      state.lastX = event.clientX;
+      state.lastY = event.clientY;
+      state.activePointerId = event.pointerId;
+      canvas.classList.add("dragging");
+      canvas.setPointerCapture(event.pointerId);
+    });
+
+    window.addEventListener("pointermove", event => {
+      state.pointerX = event.clientX;
+      state.pointerY = event.clientY;
+
+      if (!state.dragging || event.pointerId !== state.activePointerId) {
+        return;
+      }
+
+      const dx = event.clientX - state.lastX;
+      const dy = event.clientY - state.lastY;
+      state.lastX = event.clientX;
+      state.lastY = event.clientY;
+      state.dragDistance += Math.sqrt(dx * dx + dy * dy);
+
+      if (state.dragMode === "pan") {
+        panCamera(dx, dy);
+        return;
+      }
+
+      markInteraction(1800);
+      state.targetRotY += dx * 0.0062;
+      state.targetRotX += dy * 0.0054;
+      state.targetRotX = clamp(state.targetRotX, -1.2, 1.2);
+    });
+
+    function endDrag(event) {
+      if (state.activePointerId !== null && event.pointerId === state.activePointerId) {
+        state.ignoreNextClick = state.dragDistance > 5;
+        canvas.releasePointerCapture(state.activePointerId);
+        state.activePointerId = null;
+      }
+      state.dragging = false;
+      canvas.classList.remove("dragging");
+    }
+
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+
+    canvas.addEventListener("click", () => {
+      if (state.ignoreNextClick) {
+        state.ignoreNextClick = false;
+        return;
+      }
+      if (!state.hovered) {
+        return;
+      }
+      const node = nodeMap[state.hovered];
+      markInteraction(2600);
+      state.locked = node.id;
+      state.targetFocusX = node.x;
+      state.targetFocusY = node.y;
+      state.targetFocusZ = node.z;
+      state.targetZoom = 1.22;
+      setInfoCard(node);
+    });
+
+    canvas.addEventListener("wheel", event => {
+      event.preventDefault();
+      markInteraction(1800);
+      const delta = wheelZoomDelta(event);
+      state.targetZoom = clampZoom(state.targetZoom + delta);
+      postViewerState("wheel-zoom");
+    }, { passive: false });
+
+    canvas.addEventListener("contextmenu", event => {
+      event.preventDefault();
+    });
+
+    canvas.addEventListener("dblclick", () => {
+      resetView();
+    });
+
+    window.addEventListener("keydown", event => {
+      if (MODE_KEY_MAP[event.code] !== undefined) {
+        markInteraction(2200);
+        setMode(MODE_KEY_MAP[event.code], true);
+        return;
+      }
+
+      if (event.key.toLowerCase() === "b") {
+        if (state.brainVisualState) {
+          state.manualModeOverride = false;
+          setMode(state.brainVisualState.mode_index, false);
+        } else {
+          loadBrainAnalysis();
+        }
+        return;
+      }
+
+      if (event.key.toLowerCase() === "r") {
+        loadBrainAnalysis();
+        return;
+      }
+
+      if (event.key === "Escape") {
+        state.locked = null;
+        setInfoCard(null);
+        return;
+      }
+
+      if (event.key === "0") {
+        resetView();
+        return;
+      }
+
+      if (event.key === "+" || event.key === "=") {
+        markInteraction(1800);
+        state.targetZoom = clampZoom(state.targetZoom + zoomStep(1));
+        postViewerState("key-zoom-in");
+        return;
+      }
+
+      if (event.key === "-" || event.key === "_") {
+        markInteraction(1800);
+        state.targetZoom = clampZoom(state.targetZoom - Math.abs(zoomStep(-1)));
+        postViewerState("key-zoom-out");
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        markInteraction(1800);
+        state.targetRotY -= 0.08;
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        markInteraction(1800);
+        state.targetRotY += 0.08;
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        markInteraction(1800);
+        state.targetRotX = clamp(state.targetRotX - 0.08, -1.2, 1.2);
+        return;
+      }
+
+      if (event.key === "ArrowDown") {
+        markInteraction(1800);
+        state.targetRotX = clamp(state.targetRotX + 0.08, -1.2, 1.2);
+        return;
+      }
+
+      if (event.key.toLowerCase() === "w") {
+        panCamera(0, -18);
+        return;
+      }
+
+      if (event.key.toLowerCase() === "s") {
+        panCamera(0, 18);
+        return;
+      }
+
+      if (event.key.toLowerCase() === "a") {
+        panCamera(-18, 0);
+        return;
+      }
+
+      if (event.key.toLowerCase() === "d") {
+        panCamera(18, 0);
+      }
+    });
+
+    function zoomStep(direction = 1, multiplier = 1) {
+      const scaledStep = state.targetZoom * (direction > 0 ? 0.12 : 0.1);
+      const tunedStep = scaledStep * clamp(Math.abs(multiplier) || 1, 0.28, 1.85);
+      return clamp(tunedStep, 0.03, 0.48) * Math.sign(direction || 1);
+    }
+
+    function wheelZoomDelta(event) {
+      const rawMagnitude = Math.abs(Number(event.deltaY) || 0);
+      const normalized = clamp(rawMagnitude / (event.deltaMode === 1 ? 10 : 120), 0.32, 1.6);
+      const direction = event.deltaY < 0 ? 1 : -1;
+      return zoomStep(direction, normalized);
+    }
+
+    function zoomViewer(delta) {
+      markInteraction(1800);
+      state.targetZoom = clampZoom(state.targetZoom + delta);
+      postViewerState("zoom");
+    }
+
+    function setViewerZoom(percent) {
+      markInteraction(1800);
+      const nextPercent = clamp(
+        Number(percent) || zoomPercentValue(DEFAULT_ZOOM),
+        zoomPercentValue(ZOOM_MIN),
+        zoomPercentValue(ZOOM_MAX)
+      );
+      state.targetZoom = clampZoom(nextPercent / 100);
+      postViewerState("set-zoom");
+    }
+
+    window.addEventListener("message", event => {
+      if (event.origin !== window.location.origin) {
+        return;
+      }
+
+      const message = event.data;
+      if (!message || message.source !== "trading-brain-desk") {
+        return;
+      }
+
+      if (message.type === "reset-view") {
+        resetView();
+        return;
+      }
+
+      if (message.type === "zoom-in") {
+        zoomViewer(zoomStep(1));
+        return;
+      }
+
+      if (message.type === "zoom-out") {
+        zoomViewer(-Math.abs(zoomStep(-1)));
+        return;
+      }
+
+      if (message.type === "set-zoom") {
+        setViewerZoom(message.zoomPercent);
+        return;
+      }
+
+      if (message.type === "use-brain-visual") {
+        if (state.brainVisualState) {
+          state.manualModeOverride = false;
+          setMode(state.brainVisualState.mode_index, false);
+        } else {
+          loadBrainAnalysis();
+        }
+        return;
+      }
+
+      if (message.type === "use-manual-visual") {
+        setMode(Number(message.index) || 0, true);
+        return;
+      }
+
+      if (message.type === "request-viewer-state") {
+        postViewerState("requested");
+      }
+    });
+
+    resize();
+    setMode(0);
+    setInfoCard(null);
+    document.addEventListener("visibilitychange", () => {
+      state.visibilityPaused = document.hidden;
+      if (!document.hidden) {
+        state.lastFrameTime = 0;
+      }
+    });
+    window.TradingBrainWeb = {
+      loadExample: (name, mode = "super") => loadBrainAnalysis(name, mode),
+      analyzePayload: (payload, mode = "super") => analyzePayloadWithBrain(payload, mode),
+      getLatestResult: () => state.brainResult,
+      getViewerState: () => ({
+        mode: currentMode().name,
+        manualMode: state.manualModeOverride,
+        verdict: viewerVerdict(),
+        selectedNodeId: state.locked
+      }),
+      useBrainVisualMode: () => {
+        if (state.brainVisualState) {
+          state.manualModeOverride = false;
+          setMode(state.brainVisualState.mode_index, false);
+        }
+        postViewerState("brain-api");
+      },
+      useManualVisualMode: index => {
+        setMode(index, true);
+        postViewerState("manual-api");
+      },
+      resetView: () => {
+        resetView();
+        postViewerState("reset-api");
+      },
+      zoomIn: () => zoomViewer(zoomStep(1)),
+      zoomOut: () => zoomViewer(-Math.abs(zoomStep(-1))),
+      setZoom: value => setViewerZoom(value),
+    };
+    loadBrainAnalysis();
+    postViewerState("init");
+    window.addEventListener("resize", resize);
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>

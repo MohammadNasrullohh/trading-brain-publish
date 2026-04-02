@@ -1,0 +1,61 @@
+{
+  "symbol": "BTCUSDT",
+  "timeframe": "15m",
+  "style": "intraday",
+  "market_type": "crypto",
+  "session": "us",
+  "price": 68280,
+  "open": 68100,
+  "high": 68320,
+  "low": 68050,
+  "close": 68280,
+  "atr": 180,
+  "levels": {
+    "support": [68120, 67880],
+    "resistance": [68210, 68650, 68980],
+    "previous_high": 68210,
+    "previous_low": 67820,
+    "session_high": 68320,
+    "session_low": 67940
+  },
+  "indicators": {
+    "ema_fast": 68220,
+    "ema_slow": 68160,
+    "rsi": 58,
+    "macd_histogram": 11,
+    "volume_trend": "rising",
+    "vwap": 68200,
+    "adx": 28,
+    "stochastic": 64,
+    "open_interest_delta": 1.8,
+    "funding_rate": 0.012,
+    "delta_volume": 1.4,
+    "bollinger_position": 0.78,
+    "cci": 96
+  },
+  "risk": {
+    "max_risk_percent": 0.5,
+    "leverage": 12,
+    "current_drawdown_percent": 5.2,
+    "max_daily_loss_percent": 5,
+    "loss_streak": 3
+  },
+  "sentiment": {
+    "score": 0.35,
+    "headline_risk": false,
+    "correlation_bias": 0.4,
+    "macro_risk": false
+  },
+  "context": {
+    "regime_hint": "trending",
+    "session_quality_hint": "high"
+  },
+  "microstructure": {
+    "spread": 6.0,
+    "fee_bps": 4,
+    "slippage_bps": 3,
+    "weekend": false,
+    "liquidity_score": 0.82,
+    "orderbook_imbalance": 0.24
+  }
+}

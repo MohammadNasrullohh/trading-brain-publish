@@ -1,0 +1,59 @@
+{
+  "symbol": "EURUSD",
+  "timeframe": "1h",
+  "style": "intraday",
+  "market_type": "forex",
+  "session": "overlap",
+  "price": 1.0872,
+  "open": 1.0859,
+  "high": 1.0878,
+  "low": 1.0855,
+  "close": 1.0872,
+  "atr": 0.0022,
+  "levels": {
+    "support": [1.0864, 1.0848],
+    "resistance": [1.0914, 1.0942],
+    "previous_high": 1.0881,
+    "previous_low": 1.0849,
+    "session_high": 1.0878,
+    "session_low": 1.0855
+  },
+  "indicators": {
+    "ema_fast": 1.0867,
+    "ema_slow": 1.0858,
+    "rsi": 61,
+    "macd_histogram": 0.0006,
+    "volume_trend": "rising",
+    "vwap": 1.0865,
+    "adx": 29,
+    "stochastic": 68,
+    "delta_volume": 0.9,
+    "bollinger_position": 0.72,
+    "cci": 118
+  },
+  "risk": {
+    "max_risk_percent": 0.5,
+    "leverage": 8,
+    "current_drawdown_percent": 1.0,
+    "max_daily_loss_percent": 4,
+    "loss_streak": 0
+  },
+  "sentiment": {
+    "score": 0.25,
+    "headline_risk": false,
+    "correlation_bias": 0.7,
+    "macro_risk": false
+  },
+  "context": {
+    "regime_hint": "trending",
+    "session_quality_hint": "high"
+  },
+  "microstructure": {
+    "spread": 0.00009,
+    "fee_bps": 0,
+    "slippage_bps": 1,
+    "weekend": false,
+    "liquidity_score": 0.88,
+    "orderbook_imbalance": 0.16
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "symbol": "ETHUSDT",
+  "timeframe": "30m",
+  "style": "intraday",
+  "market_type": "crypto",
+  "session": "europe",
+  "price": 3240,
+  "open": 3260,
+  "high": 3265,
+  "low": 3235,
+  "close": 3240,
+  "atr": 18,
+  "levels": {
+    "support": [3248, 3180, 3120],
+    "resistance": [3250, 3290],
+    "previous_high": 3298,
+    "previous_low": 3238,
+    "session_high": 3265,
+    "session_low": 3235
+  },
+  "indicators": {
+    "ema_fast": 3245,
+    "ema_slow": 3258,
+    "rsi": 41,
+    "macd_histogram": -9,
+    "volume_trend": "rising",
+    "vwap": 3248,
+    "adx": 27,
+    "stochastic": 31,
+    "open_interest_delta": 1.1,
+    "funding_rate": 0.008,
+    "delta_volume": -1.2,
+    "bollinger_position": 0.24,
+    "cci": -112
+  },
+  "risk": {
+    "max_risk_percent": 0.5,
+    "leverage": 4,
+    "current_drawdown_percent": 0.8,
+    "max_daily_loss_percent": 5,
+    "loss_streak": 0
+  },
+  "sentiment": {
+    "score": -0.4,
+    "headline_risk": false,
+    "correlation_bias": -0.2,
+    "macro_risk": false
+  },
+  "context": {
+    "regime_hint": "trending",
+    "session_quality_hint": "high"
+  },
+  "microstructure": {
+    "spread": 0.8,
+    "fee_bps": 4,
+    "slippage_bps": 4,
+    "weekend": false,
+    "liquidity_score": 0.76,
+    "orderbook_imbalance": -0.21
+  }
+}

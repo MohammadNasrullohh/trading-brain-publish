@@ -1,0 +1,61 @@
+{
+  "symbol": "SOLUSDT",
+  "timeframe": "15m",
+  "style": "intraday",
+  "market_type": "crypto",
+  "session": "asia",
+  "price": 100.0,
+  "open": 100.05,
+  "high": 100.3,
+  "low": 99.8,
+  "close": 100.0,
+  "atr": 0.15,
+  "levels": {
+    "support": [99.7],
+    "resistance": [100.3],
+    "previous_high": 100.35,
+    "previous_low": 99.65,
+    "session_high": 100.3,
+    "session_low": 99.8
+  },
+  "indicators": {
+    "ema_fast": 100.0,
+    "ema_slow": 100.0,
+    "rsi": 50,
+    "macd_histogram": 0.0,
+    "volume_trend": "weak",
+    "vwap": 100.0,
+    "adx": 12,
+    "stochastic": 50,
+    "open_interest_delta": -0.5,
+    "funding_rate": 0.002,
+    "delta_volume": -0.1,
+    "bollinger_position": 0.5,
+    "cci": 2
+  },
+  "risk": {
+    "max_risk_percent": 0.5,
+    "leverage": 2,
+    "current_drawdown_percent": 2.4,
+    "max_daily_loss_percent": 5,
+    "loss_streak": 1
+  },
+  "sentiment": {
+    "score": 0.0,
+    "headline_risk": false,
+    "correlation_bias": 0.0,
+    "macro_risk": false
+  },
+  "context": {
+    "regime_hint": "ranging",
+    "session_quality_hint": "medium"
+  },
+  "microstructure": {
+    "spread": 0.08,
+    "fee_bps": 5,
+    "slippage_bps": 6,
+    "weekend": false,
+    "liquidity_score": 0.28,
+    "orderbook_imbalance": -0.05
+  }
+}
